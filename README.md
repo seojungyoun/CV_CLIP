@@ -1,4 +1,4 @@
-# MetVision — CLIP-LoRA 기반 메트로폴리탄 박물관 시맨틱 검색 엔진
+# MuseAI — CLIP-LoRA 기반 메트로폴리탄 박물관 시맨틱 검색 엔진
 
 > 자연어 한 문장으로 470,000점의 Met Museum 컬렉션을 탐색하는 AI 검색 시스템
 
