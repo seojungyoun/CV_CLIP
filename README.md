@@ -1,4 +1,5 @@
-# CLIP + LoRA 시맨틱 검색 엔진: 검색 정확도 수정 및 Met Museum 데이터셋 전환## Summary
+## CLIP + LoRA 시맨틱 검색 엔진: 검색 정확도 수정 및 Met Museum 데이터셋 전환
+## Summary
 
 - **검색 정확도 3가지 근본 원인 수정**: 코사인 유사도 적용, LoRA 학습 루프 추가, LoRA 타겟 모듈 오류 수정
 - **데이터셋 전환**: Pushkin Museum (7,562개, 러시아어) → Met Museum Open Access (470,000+개, 영어)
