@@ -6,7 +6,14 @@
       "Bash(python -c \"import json; nb=json.load\\(open\\('Final_초안 \\(2\\).ipynb','r',encoding='utf-8'\\)\\); [print\\(i, repr\\(c['source'][:60]\\)\\) for i,c in enumerate\\(nb['cells']\\)]\")",
       "Bash(python update_notebook.py)",
       "Bash(python -c ' *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(pip install *)",
+      "Bash(curl -s https://raw.githubusercontent.com/metmuseum/openaccess/master/MetObjects.csv)",
+      "Bash(curl -s -L https://github.com/metmuseum/openaccess/raw/master/MetObjects.csv)",
+      "Bash(awk -F, '{for\\(i=1;i<=NF;i++\\) print i\": \"$i}')",
+      "Bash(git commit *)",
+      "Bash(git merge *)"
     ]
   }
 }
