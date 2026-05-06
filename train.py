@@ -126,16 +126,24 @@ def train():
     model = get_peft_model(base_model, config)
     model.print_trainable_parameters()
 
-    dataset = MetPairDataset(df, max_pairs=100_000)
-    loader = DataLoader(dataset, batch_size=64, shuffle=True, drop_last=True)
+    # CPU/GPU 환경에 맞게 자동 조정
+    if device == "cuda":
+        max_pairs, batch_size, num_epochs = 100_000, 64, 5
+    else:
+        # CPU: 10,000쌍 × 3에폭 ≈ 20~30분
+        max_pairs, batch_size, num_epochs = 10_000, 32, 3
+        print("CPU 감지 → 경량 설정 적용 (10,000쌍 / batch 32 / 3 에폭, 약 20~30분)")
+
+    dataset = MetPairDataset(df, max_pairs=max_pairs)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
     lora_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = AdamW(lora_params, lr=2e-4, weight_decay=0.01)
-    scheduler = CosineAnnealingLR(optimizer, T_max=len(loader) * 5)
+    scheduler = CosineAnnealingLR(optimizer, T_max=len(loader) * num_epochs)
 
     best_loss = float("inf")
 
-    for epoch in range(5):
+    for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
         t0 = time.time()
