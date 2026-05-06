@@ -66,10 +66,12 @@ def train():
 
     # 모델 로드 + LoRA 적용
     model, _ = clip.load("ViT-B/32", device=device)
+    # CLIP의 MultiheadAttention은 out_proj.weight를 직접 추출해 F.multi_head_attention_forward에 넘기므로
+    # LoRA 래퍼의 forward()가 호출되지 않아 그래디언트가 없음 → MLP 레이어(c_fc, c_proj)를 타겟으로 변경
     config = LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "v_proj", "out_proj"],
+        target_modules=["c_fc", "c_proj"],
         lora_dropout=0.1,
     )
     model = get_peft_model(model, config)

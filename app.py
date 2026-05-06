@@ -112,7 +112,7 @@ def load_model():
     config = LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "v_proj", "out_proj"],
+        target_modules=["c_fc", "c_proj"],
         lora_dropout=0.1,
     )
     model = get_peft_model(base_model, config)
