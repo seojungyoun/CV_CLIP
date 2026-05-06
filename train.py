@@ -1,7 +1,11 @@
 """
-Museum CLIP Fine-tuning with Contrastive Loss
-train.csv의 query-item 쌍을 사용해 LoRA로 경량 파인튜닝
+Met Museum CLIP Fine-tuning — Self-Supervised Contrastive Learning
+라벨 없이 각 작품의 두 가지 텍스트 뷰를 positive pair로 사용:
+  View A (anchor)  : Title
+  View B (positive): "Medium by Artist, Culture, Period, Department"
+같은 작품을 가리키는 두 설명 → embedding space에서 가깝게 학습
 """
+import os
 import pandas as pd
 import torch
 import torch.nn.functional as F
@@ -12,24 +16,76 @@ from torch.utils.data import Dataset, DataLoader
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import time
-import os
+
+CSV_PATH = "./MetObjects.csv"
+WEIGHTS_PATH = "./museum_lora_weights.pt"
+
+
+# ── 데이터 로드 & 전처리 ──────────────────────────────────────────────────────
+def load_met_data(csv_path: str = CSV_PATH) -> pd.DataFrame:
+    print("CSV 로딩 중... (~317MB, 잠시 대기)")
+    df = pd.read_csv(csv_path, low_memory=False)
+    print(f"전체 오브젝트: {len(df):,}개")
+
+    # 제목 없는 행 제거
+    df = df[df["Title"].notna() & (df["Title"].str.strip() != "")].copy()
+
+    # 풍부한 텍스트 생성
+    def build_text(row):
+        parts = [str(row["Title"]).strip()]
+        if pd.notna(row.get("Artist Display Name")) and str(row["Artist Display Name"]).strip():
+            parts.append(f"by {str(row['Artist Display Name']).strip()}")
+        if pd.notna(row.get("Object Date")) and str(row["Object Date"]).strip():
+            parts.append(str(row["Object Date"]).strip())
+        if pd.notna(row.get("Medium")) and str(row["Medium"]).strip():
+            parts.append(str(row["Medium"]).strip())
+        if pd.notna(row.get("Culture")) and str(row["Culture"]).strip():
+            parts.append(str(row["Culture"]).strip())
+        if pd.notna(row.get("Department")) and str(row["Department"]).strip():
+            parts.append(str(row["Department"]).strip())
+        if pd.notna(row.get("Classification")) and str(row["Classification"]).strip():
+            parts.append(str(row["Classification"]).strip())
+        if pd.notna(row.get("Tags")) and str(row["Tags"]).strip():
+            parts.append(str(row["Tags"]).strip())
+        return " | ".join(parts)
+
+    df["text_data"] = df.apply(build_text, axis=1)
+
+    # Self-supervised pair용 메타데이터 뷰
+    def build_meta(row):
+        parts = []
+        if pd.notna(row.get("Medium")) and str(row["Medium"]).strip():
+            parts.append(str(row["Medium"]).strip())
+        if pd.notna(row.get("Artist Display Name")) and str(row["Artist Display Name"]).strip():
+            parts.append(f"by {str(row['Artist Display Name']).strip()}")
+        if pd.notna(row.get("Culture")) and str(row["Culture"]).strip():
+            parts.append(str(row["Culture"]).strip())
+        if pd.notna(row.get("Period")) and str(row["Period"]).strip():
+            parts.append(str(row["Period"]).strip())
+        if pd.notna(row.get("Department")) and str(row["Department"]).strip():
+            parts.append(str(row["Department"]).strip())
+        return " | ".join(parts) if parts else str(row["Title"]).strip()
+
+    df["meta_view"] = df.apply(build_meta, axis=1)
+    print(f"유효 오브젝트: {len(df):,}개")
+    return df
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
-class MuseumPairDataset(Dataset):
-    """train.csv의 (query_item, positive_item) 텍스트 쌍 데이터셋"""
-
-    def __init__(self, train_df: pd.DataFrame, item_text: dict):
-        self.pairs = []
-        skipped = 0
-        for _, row in train_df.iterrows():
-            q = item_text.get(row["query_id"], "").strip()
-            p = item_text.get(row["item_id"], "").strip()
-            if len(q) > 5 and len(p) > 5:
-                self.pairs.append((q, p))
-            else:
-                skipped += 1
-        print(f"유효 쌍: {len(self.pairs):,}개 | 스킵: {skipped}개")
+class MetPairDataset(Dataset):
+    """
+    Self-supervised: (Title) ↔ (Medium + Artist + Culture + Period + Department)
+    같은 작품의 두 텍스트 뷰를 positive pair로 학습
+    """
+    def __init__(self, df: pd.DataFrame, max_pairs: int = 100_000):
+        pairs = [
+            (str(row["Title"]).strip(), str(row["meta_view"]).strip())
+            for _, row in df.iterrows()
+            if len(str(row["Title"]).strip()) > 3
+            and len(str(row["meta_view"]).strip()) > 3
+        ]
+        self.pairs = pairs[:max_pairs]
+        print(f"학습 쌍: {len(self.pairs):,}개")
 
     def __len__(self):
         return len(self.pairs)
@@ -39,69 +95,59 @@ class MuseumPairDataset(Dataset):
 
 
 # ── Loss ──────────────────────────────────────────────────────────────────────
-def contrastive_loss(q_embs: torch.Tensor, p_embs: torch.Tensor, temperature: float = 0.07):
-    """대칭 InfoNCE loss (CLIP 원본 방식)"""
-    q_embs = F.normalize(q_embs.float(), dim=-1)
-    p_embs = F.normalize(p_embs.float(), dim=-1)
-    logits = (q_embs @ p_embs.T) / temperature
-    labels = torch.arange(len(q_embs), device=q_embs.device)
-    loss = (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2
-    return loss
+def contrastive_loss(q: torch.Tensor, p: torch.Tensor, temperature: float = 0.07):
+    """대칭 InfoNCE (CLIP 방식)"""
+    q = F.normalize(q.float(), dim=-1)
+    p = F.normalize(p.float(), dim=-1)
+    logits = (q @ p.T) / temperature
+    labels = torch.arange(len(q), device=q.device)
+    return (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def train():
+    if not os.path.exists(CSV_PATH):
+        print(f"{CSV_PATH} 없음 → 먼저 python download_data.py 실행")
+        return
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
 
-    # 데이터 로드
-    items = pd.read_csv("./items.csv")
-    # title만 쓰면 영어 텍스트 비율이 더 높아짐(특히 video/article)
-    # description은 러시아어가 많아 노이즈가 될 수 있으므로 title 우선
-    items["text_data"] = items["title"].fillna("") + ". " + items["description"].fillna("")
-    items["text_data"] = items["text_data"].str.strip(". ")
-    item_text = dict(zip(items["item_id"], items["text_data"]))
+    df = load_met_data()
 
-    train_df = pd.read_csv("./train.csv")
-
-    # 모델 로드 + LoRA 적용
-    model, _ = clip.load("ViT-B/32", device=device)
+    # 모델 로드 + LoRA (MLP 레이어 타겟 — attention은 weight 직접 추출로 LoRA 우회됨)
+    base_model, _ = clip.load("ViT-B/32", device=device)
     config = LoraConfig(
         r=16,
         lora_alpha=32,
-        target_modules=["q_proj", "v_proj", "out_proj"],
+        target_modules=["c_fc", "c_proj"],
         lora_dropout=0.1,
     )
-    model = get_peft_model(model, config)
+    model = get_peft_model(base_model, config)
     model.print_trainable_parameters()
 
-    # 데이터셋
-    dataset = MuseumPairDataset(train_df, item_text)
+    dataset = MetPairDataset(df, max_pairs=100_000)
     loader = DataLoader(dataset, batch_size=64, shuffle=True, drop_last=True)
 
-    # 옵티마이저 (LoRA 파라미터만)
     lora_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = AdamW(lora_params, lr=2e-4, weight_decay=0.01)
     scheduler = CosineAnnealingLR(optimizer, T_max=len(loader) * 5)
 
-    # 학습
     best_loss = float("inf")
-    num_epochs = 5
 
-    for epoch in range(num_epochs):
+    for epoch in range(5):
         model.train()
         total_loss = 0.0
         t0 = time.time()
 
-        for batch_idx, (queries, positives) in enumerate(loader):
-            q_tokens = clip.tokenize(list(queries), truncate=True).to(device)
-            p_tokens = clip.tokenize(list(positives), truncate=True).to(device)
+        for i, (titles, metas) in enumerate(loader):
+            q_tok = clip.tokenize(list(titles), truncate=True).to(device)
+            p_tok = clip.tokenize(list(metas), truncate=True).to(device)
 
-            q_embs = model.model.encode_text(q_tokens)
-            p_embs = model.model.encode_text(p_tokens)
+            q_emb = model.model.encode_text(q_tok)
+            p_emb = model.model.encode_text(p_tok)
 
-            loss = contrastive_loss(q_embs, p_embs)
-
+            loss = contrastive_loss(q_emb, p_emb)
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(lora_params, 1.0)
@@ -110,24 +156,19 @@ def train():
 
             total_loss += loss.item()
 
-            if batch_idx % 30 == 0:
+            if i % 30 == 0:
                 elapsed = time.time() - t0
-                print(
-                    f"Epoch {epoch+1}/{num_epochs} | "
-                    f"Batch {batch_idx}/{len(loader)} | "
-                    f"Loss: {loss.item():.4f} | "
-                    f"Time: {elapsed:.1f}s"
-                )
+                print(f"Epoch {epoch+1}/5 | Batch {i}/{len(loader)} | Loss {loss.item():.4f} | {elapsed:.0f}s")
 
-        avg_loss = total_loss / len(loader)
-        print(f"\n[Epoch {epoch+1}] Avg Loss: {avg_loss:.4f}")
+        avg = total_loss / len(loader)
+        print(f"[Epoch {epoch+1}] Avg Loss: {avg:.4f}")
 
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            torch.save(model.state_dict(), "./museum_lora_weights.pt")
-            print("✅ Best model saved → museum_lora_weights.pt\n")
+        if avg < best_loss:
+            best_loss = avg
+            torch.save(model.state_dict(), WEIGHTS_PATH)
+            print(f"  Best model saved → {WEIGHTS_PATH}")
 
-    print(f"학습 완료! 최종 best loss: {best_loss:.4f}")
+    print(f"학습 완료! Best Loss: {best_loss:.4f}")
 
 
 if __name__ == "__main__":
