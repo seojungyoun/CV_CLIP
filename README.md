@@ -22,7 +22,7 @@
 ## 주요 기능
 
 - **자연어 시맨틱 검색** — 영어 자연어 쿼리를 512차원 벡터로 임베딩 후 FAISS로 Top-K 탐색
-- **부서 필터** — 17개 부서(Egyptian Art, European Paintings, Photographs 등) 별도 필터링
+- **분류 필터** — 17개 부서(Egyptian Art, European Paintings, Photographs 등) 별도 필터링
 - **실시간 이미지 썸네일** — 공공도메인 작품은 Met API를 통해 실제 이미지 표시 (토글)
 - **유사도 점수 표시** — 검색 결과마다 코사인 유사도를 바(bar) 형태로 시각화
 - **LoRA 경량 파인튜닝** — 전체 파라미터의 0.32%(49만 개)만 학습, 도메인 특화 성능 향상
