@@ -1,36 +1,33 @@
-"""
-MetObjects.csv 다운로드 스크립트
-출처: https://github.com/metmuseum/openaccess
-크기: ~317 MB  /  약 470,000 오브젝트
-"""
-import os
+from pathlib import Path
+
 import requests
 from tqdm import tqdm
 
-URL = "https://raw.githubusercontent.com/metmuseum/openaccess/master/MetObjects.csv"
-DEST = "./MetObjects.csv"
+from config import DATA_DIR, RAW_CSV
+
+URL = "https://media.githubusercontent.com/media/metmuseum/openaccess/master/MetObjects.csv"
 
 
-def download():
-    if os.path.exists(DEST):
-        size_mb = os.path.getsize(DEST) / 1e6
-        print(f"이미 존재합니다: {DEST} ({size_mb:.1f} MB) — 재다운로드하려면 파일을 삭제하세요.")
+def download(destination: Path = RAW_CSV) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() and destination.stat().st_size > 100 * 1024 * 1024:
+        print(f"이미 존재합니다: {destination}")
         return
-
-    print(f"다운로드 중: {URL}")
-    resp = requests.get(URL, stream=True, timeout=60)
-    resp.raise_for_status()
-
-    total = int(resp.headers.get("content-length", 0))
-    with open(DEST, "wb") as f, tqdm(
-        total=total, unit="B", unit_scale=True, desc="MetObjects.csv"
-    ) as bar:
-        for chunk in resp.iter_content(chunk_size=1024 * 64):
-            f.write(chunk)
-            bar.update(len(chunk))
-
-    print(f"완료: {DEST} ({os.path.getsize(DEST)/1e6:.1f} MB)")
+    temporary = destination.with_suffix(".csv.part")
+    with requests.get(URL, stream=True, timeout=60) as response:
+        response.raise_for_status()
+        total = int(response.headers.get("content-length", 0))
+        with temporary.open("wb") as output, tqdm(
+            total=total, unit="B", unit_scale=True, desc="MetObjects.csv"
+        ) as bar:
+            for chunk in response.iter_content(1024 * 1024):
+                if chunk:
+                    output.write(chunk)
+                    bar.update(len(chunk))
+    temporary.replace(destination)
+    print(f"저장 완료: {destination}")
 
 
 if __name__ == "__main__":
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     download()

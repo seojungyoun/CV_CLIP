@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+data/
+artifacts/
+*.pt
+*.onnx
+*.npy
+*.index
+.streamlit/secrets.toml

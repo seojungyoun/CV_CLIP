@@ -1,184 +1,138 @@
-# MuseAI — CLIP-LoRA 기반 메트로폴리탄 박물관 시맨틱 검색 엔진
+# Met Museum CLIP Semantic Search
 
-> 자연어 한 문장으로 470,000점의 Met Museum 컬렉션을 탐색하는 AI 검색 시스템
+Metropolitan Museum of Art Open Access 이미지와 메타데이터를 사용해 CLIP을 미세조정하고, 자연어로 작품을 검색하는 Streamlit 프로젝트입니다. CSV에서 `Is Public Domain == True`이며 이미지 URL이 존재하는 작품만 데이터셋에 포함합니다.
 
----
-
-## 프로젝트 소개
-
-**MetVision**은 OpenAI CLIP + LoRA 파인튜닝 + FAISS 벡터 DB를 결합한 시맨틱 검색 엔진입니다.  
-기존 박물관 검색의 단순 키워드 매칭 방식을 대체하여, `"ancient Egyptian gold jewelry"`, `"19세기 인상주의 파리 풍경화"` 처럼 의미 기반 자연어 쿼리로 관련 작품을 즉시 찾아줍니다.
-
-| | |
-|---|---|
-| **데이터셋** | Metropolitan Museum of Art Open Access (470,000+ 오브젝트) |
-| **모델** | OpenAI CLIP ViT-B/32 + LoRA (MLP 레이어 파인튜닝) |
-| **벡터 DB** | FAISS IndexFlatIP (코사인 유사도) |
-| **UI** | Streamlit (부서 필터 · 유사도 바 · Met API 이미지 썸네일) |
-| **학습 방식** | Self-supervised Contrastive Learning (라벨링 불필요) |
-
----
+> 실행 화면 캡처는 최종 배포 후 `docs/images/app.png`에 추가하세요. 측정하지 않은 성능 수치는 README나 보고서에 임의로 기입하지 않습니다.
 
 ## 주요 기능
 
-- **자연어 시맨틱 검색** — 영어 자연어 쿼리를 512차원 벡터로 임베딩 후 FAISS로 Top-K 탐색
-- **분류 필터** — 17개 부서(Egyptian Art, European Paintings, Photographs 등) 별도 필터링
-- **실시간 이미지 썸네일** — 공공도메인 작품은 Met API를 통해 실제 이미지 표시 (토글)
-- **유사도 점수 표시** — 검색 결과마다 코사인 유사도를 바(bar) 형태로 시각화
-- **LoRA 경량 파인튜닝** — 전체 파라미터의 0.32%(49만 개)만 학습, 도메인 특화 성능 향상
-
----
+- 공개 도메인 이미지 자동 필터링 및 병렬 다운로드
+- 실제 이미지-텍스트 쌍을 이용한 CLIP contrastive fine-tuning
+- Object ID 해시 기반 Train/Valid/Test 고정 분할
+- Baseline 대비 Zero-shot Accuracy, Image Retrieval R@1/R@5, Latency 평가
+- FAISS 인덱스 사전 생성으로 웹 앱 시작 시간 단축
+- Streamlit 모델 및 인덱스 싱글톤 캐시
+- 로컬 절대 경로 없는 설정 구조
 
 ## 프로젝트 구조
 
-```
+```text
 CV_CLIP/
-├── app.py              # Streamlit 웹 애플리케이션
-├── train.py            # LoRA 파인튜닝 스크립트
-├── download_data.py    # MetObjects.csv 다운로드 스크립트
-├── MetObjects.csv      # Met Museum 데이터 (~303 MB, 직접 다운로드)
-├── museum_lora_weights.pt  # 학습된 LoRA 가중치 (train.py 실행 후 생성)
-└── Final_초안 (2).ipynb   # Colab 전체 파이프라인 노트북
+├── app.py                         # Streamlit UI
+├── build_index.py                 # 이미지 임베딩 및 FAISS 인덱스 생성
+├── clip_utils.py                  # CLIP 로드 및 학습 범위 설정
+├── config.py                      # 경로와 모델 설정
+├── data_pipeline.py               # 저작권 필터, 분할, 이미지 다운로드
+├── download_data.py               # MetObjects.csv 자동 다운로드
+├── evaluate.py                    # Baseline/Fine-tuned 정량 평가
+├── prepare_data.py                # 학습 데이터 준비 CLI
+├── train.py                       # CLIP 미세조정
+├── requirements.txt
+└── docs/FINAL_REPORT_CHECKLIST.md
 ```
 
----
+## 개발 환경
 
-## 기술 스택
+- Python 3.10 또는 3.11 권장
+- CUDA GPU 권장, CPU 실행 가능
+- PyTorch, OpenCLIP, FAISS, Streamlit, pandas
 
-```
-CLIP ViT-B/32  ──►  LoRA (c_fc, c_proj)  ──►  L2 정규화
-                                                    │
-                                              FAISS IndexFlatIP
-                                             (코사인 유사도 검색)
-                                                    │
-                                             Streamlit UI
-                                           (검색창 · 카드 · 필터)
-```
-
-### LoRA 타겟 모듈 선택 이유
-
-CLIP의 `MultiheadAttention`은 `out_proj.weight`를 직접 추출해 `F.multi_head_attention_forward()`에 전달하므로 LoRA 래퍼의 `forward()`가 **우회**됩니다.  
-그래디언트가 흐르는 MLP 레이어(`c_fc`, `c_proj`)를 타겟으로 지정해야 정상 학습이 가능합니다.
-
-### 검색 정확도 핵심 수정
-
-| 항목 | 기존 | 수정 |
-|---|---|---|
-| 유사도 지표 | `IndexFlatL2` (비정규화) | `IndexFlatIP` + L2 정규화 |
-| 학습 | 없음 | Self-supervised InfoNCE loss |
-| LoRA 타겟 | `q_proj, v_proj, out_proj` | `c_fc, c_proj` |
-
----
-
-## 실행 방법
-
-### 1. 환경 설정
+## 설치 및 실행
 
 ```bash
-pip install ftfy regex tqdm requests
-pip install git+https://github.com/openai/CLIP.git
-pip install peft faiss-cpu streamlit
+git clone <REPOSITORY_URL>
+cd CV_CLIP
+python -m venv .venv
 ```
 
-### 2. 데이터 다운로드
+Windows:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+macOS/Linux:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+데이터 준비부터 앱 실행까지:
 
 ```bash
 python download_data.py
-```
-
-> `MetObjects.csv` (~303 MB) 를 GitHub에서 자동 다운로드합니다.  
-> 이미 파일이 있으면 건너뜁니다.
-
-### 3. LoRA 파인튜닝 (선택)
-
-```bash
-python train.py
-```
-
-| 환경 | 설정 | 예상 시간 |
-|---|---|---|
-| CPU | 10,000쌍 / batch 32 / 3 에폭 | 약 20~30분 |
-| GPU (CUDA) | 100,000쌍 / batch 64 / 5 에폭 | 약 20분 |
-
-학습이 끝나면 `museum_lora_weights.pt` 가 생성됩니다.  
-파일이 없어도 앱은 Base CLIP으로 동작합니다.
-
-### 4. 앱 실행
-
-```bash
+python prepare_data.py --limit 20000 --workers 16
+python train.py --epochs 3 --batch-size 64
+python evaluate.py
+python build_index.py
 streamlit run app.py
 ```
 
-브라우저에서 `http://localhost:8501` 접속.
+GPU 메모리가 부족하면 `--batch-size 16` 또는 `32`를 사용하세요. 빠른 기능 확인은 `prepare_data.py --limit 1000`으로 가능합니다.
 
----
+학습 산출물이 없어도 `streamlit run app.py`는 중단되지 않고 필요한 준비 명령을 화면에 안내합니다.
 
-## 검색 예시
+## 데이터 파이프라인
 
-| 쿼리 | 기대 결과 |
-|---|---|
-| `ancient Egyptian mummy sarcophagus` | 이집트 유물 · 석관 |
-| `Renaissance oil portrait nobleman` | 유럽 회화 초상화 |
-| `black and white street photography` | 20세기 흑백 사진 |
-| `medieval knight sword armor` | 무기 · 갑옷 컬렉션 |
-| `abstract expressionism painting` | 현대미술 추상 회화 |
-| `ancient Greek marble sculpture` | 그리스·로마 조각 |
+1. Met Open Access의 `MetObjects.csv`를 `data/`에 다운로드합니다.
+2. `Is Public Domain` 값이 참인 행만 남깁니다.
+3. `Primary Image` 또는 `Primary Image Small` URL이 있는 행만 남깁니다.
+4. 병렬 다운로드 후 손상되거나 이미지가 아닌 응답을 제외합니다.
+5. `Object ID`의 SHA-1 해시로 Train 80%, Valid 10%, Test 10%를 고정 분할합니다.
+6. 제목, 작가, 연도, 재질, 문화권, 부서, 분류, 태그를 캡션으로 구성합니다.
 
----
+동일한 `Object ID`는 항상 한 split에만 배정되므로 실행 순서가 바뀌어도 데이터 누수가 발생하지 않습니다.
 
-## Colab 배포 (Google Colab)
+## 속도 최적화
 
-`Final_초안 (2).ipynb` 를 Colab에서 순서대로 실행하면 cloudflared 터널을 통해 퍼블릭 URL이 생성됩니다.
+- 47만 행 전체가 아니라 저작권 및 이미지 조건을 먼저 적용합니다.
+- 이미지 다운로드에 `ThreadPoolExecutor`를 사용합니다.
+- CLIP 전체가 아닌 마지막 text transformer block과 projection만 학습합니다.
+- CUDA AMP, pinned memory, non-blocking transfer, persistent DataLoader worker를 사용합니다.
+- 앱 시작 시 임베딩을 다시 계산하지 않고 저장된 FAISS 인덱스를 읽습니다.
+- Streamlit `@st.cache_resource`와 `@st.cache_data`로 모델, 인덱스, 메타데이터를 재사용합니다.
 
-```
-셀 1: 라이브러리 설치
-셀 2: 데이터 다운로드
-셀 3: 데이터 전처리
-셀 4: CLIP + LoRA 모델 로드
-셀 5: FAISS 인덱스 구축
-셀 6: 검색 함수 테스트
-셀 7: LoRA 파인튜닝
-셀 8: app.py 작성
-셀 9: Streamlit + cloudflared 배포
+## 평가
+
+```bash
+python evaluate.py
 ```
 
----
+결과는 `artifacts/metrics.json`에 저장됩니다.
 
-## 데이터셋
-
-**Metropolitan Museum of Art Open Access**  
-- 출처: [github.com/metmuseum/openaccess](https://github.com/metmuseum/openaccess)  
-- 규모: 약 470,000 오브젝트, 54개 컬럼  
-- 라이선스: [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/)
-
-주요 컬럼:
-
-| 컬럼 | 설명 |
+| 구분 | 필수 지표 |
 |---|---|
-| `Title` | 작품명 |
-| `Artist Display Name` | 작가명 |
-| `Object Date` | 제작 연도 |
-| `Medium` | 재료/기법 |
-| `Department` | 부서 (17개) |
-| `Classification` | 분류 |
-| `Culture` | 문화권 |
-| `Tags` | 태그 |
-| `Is Public Domain` | 공공도메인 여부 |
-| `Link Resource` | Met Museum 공식 페이지 URL |
+| Zero-shot | Department prompt classification accuracy |
+| Retrieval | Image Retrieval R@1, R@5 |
+| Runtime | 이미지 1개당 추론 latency(ms) |
 
----
+`baseline`은 사전학습 CLIP, `fine_tuned`는 프로젝트 학습 가중치를 사용합니다. 보고서에는 실제 실행 결과와 함께 데이터 수, GPU/CPU, batch size를 기록하세요.
 
-## 팀원
+## 대용량 파일
 
-| 이름 | 학번 |
+`data/`, `artifacts/`, `.pt`, `.onnx`, `.npy`, `.index`는 Git에서 제외됩니다. 최종 가중치와 인덱스는 Google Drive 같은 외부 저장소에 업로드하고 아래 링크를 실제 주소로 교체하세요.
+
+- Fine-tuned weights: `<WEIGHTS_DOWNLOAD_URL>`
+- FAISS index and metadata: `<INDEX_DOWNLOAD_URL>`
+
+또는 이 README의 명령으로 새 PC에서 직접 재생성할 수 있습니다.
+
+## 팀원 역할
+
+제출 전에 실제 역할로 수정하세요.
+
+| 팀원 | 역할 |
 |---|---|
-| 서정윤 | 20220689 |
-| 김연우 | 20220858 |
+| 팀원 1 | 데이터 필터링, 학습 파이프라인, 정량 평가 |
+| 팀원 2 | FAISS 검색, Streamlit UI, 배포 및 문서화 |
 
----
+## 보고서 작성
 
-## 참고 문헌
+데이터 분포, 샘플과 라벨 상태, Baseline 비교표, Failure Case, 서비스 구현 내용은 [`docs/FINAL_REPORT_CHECKLIST.md`](docs/FINAL_REPORT_CHECKLIST.md)를 기준으로 작성합니다.
 
-- [CLIP: Learning Transferable Visual Models From Natural Language Supervision](https://arxiv.org/abs/2103.00020) — Radford et al., 2021
-- [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685) — Hu et al., 2021
-- [FAISS: A Library for Efficient Similarity Search](https://github.com/facebookresearch/faiss) — Facebook AI Research
+## 데이터 및 라이선스
+
+- Metadata: [The Met Open Access](https://github.com/metmuseum/openaccess)
+- 본 프로젝트는 CSV에서 공개 도메인으로 표시된 이미지에 한해 학습 및 화면 표시를 수행합니다.

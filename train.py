@@ -1,183 +1,149 @@
-"""
-Met Museum CLIP Fine-tuning — Self-Supervised Contrastive Learning
-라벨 없이 각 작품의 두 가지 텍스트 뷰를 positive pair로 사용:
-  View A (anchor)  : Title
-  View B (positive): "Medium by Artist, Culture, Period, Department"
-같은 작품을 가리키는 두 설명 → embedding space에서 가깝게 학습
-"""
-import os
+import argparse
+import json
+import random
+import time
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-import clip
-import numpy as np
-from peft import LoraConfig, get_peft_model
-from torch.utils.data import Dataset, DataLoader
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
-import time
+from PIL import Image
+from torch.amp import GradScaler, autocast
+from torch.utils.data import DataLoader, Dataset
 
-CSV_PATH = "./MetObjects.csv"
-WEIGHTS_PATH = "./museum_lora_weights.pt"
+from clip_utils import get_device, load_clip, trainable_text_parameters
+from config import ARTIFACT_DIR, MODEL_DIR, SEED
 
 
-# ── 데이터 로드 & 전처리 ──────────────────────────────────────────────────────
-def load_met_data(csv_path: str = CSV_PATH) -> pd.DataFrame:
-    print("CSV 로딩 중... (~317MB, 잠시 대기)")
-    df = pd.read_csv(csv_path, low_memory=False)
-    print(f"전체 오브젝트: {len(df):,}개")
+class MetImageTextDataset(Dataset):
+    def __init__(self, frame: pd.DataFrame, preprocess, tokenizer):
+        self.frame = frame.reset_index(drop=True)
+        self.preprocess = preprocess
+        self.tokens = tokenizer(self.frame["caption"].tolist())
 
-    # 제목 없는 행 제거
-    df = df[df["Title"].notna() & (df["Title"].str.strip() != "")].copy()
+    def __len__(self) -> int:
+        return len(self.frame)
 
-    # 풍부한 텍스트 생성
-    def build_text(row):
-        parts = [str(row["Title"]).strip()]
-        if pd.notna(row.get("Artist Display Name")) and str(row["Artist Display Name"]).strip():
-            parts.append(f"by {str(row['Artist Display Name']).strip()}")
-        if pd.notna(row.get("Object Date")) and str(row["Object Date"]).strip():
-            parts.append(str(row["Object Date"]).strip())
-        if pd.notna(row.get("Medium")) and str(row["Medium"]).strip():
-            parts.append(str(row["Medium"]).strip())
-        if pd.notna(row.get("Culture")) and str(row["Culture"]).strip():
-            parts.append(str(row["Culture"]).strip())
-        if pd.notna(row.get("Department")) and str(row["Department"]).strip():
-            parts.append(str(row["Department"]).strip())
-        if pd.notna(row.get("Classification")) and str(row["Classification"]).strip():
-            parts.append(str(row["Classification"]).strip())
-        if pd.notna(row.get("Tags")) and str(row["Tags"]).strip():
-            parts.append(str(row["Tags"]).strip())
-        return " | ".join(parts)
-
-    df["text_data"] = df.apply(build_text, axis=1)
-
-    # Self-supervised pair용 메타데이터 뷰
-    def build_meta(row):
-        parts = []
-        if pd.notna(row.get("Medium")) and str(row["Medium"]).strip():
-            parts.append(str(row["Medium"]).strip())
-        if pd.notna(row.get("Artist Display Name")) and str(row["Artist Display Name"]).strip():
-            parts.append(f"by {str(row['Artist Display Name']).strip()}")
-        if pd.notna(row.get("Culture")) and str(row["Culture"]).strip():
-            parts.append(str(row["Culture"]).strip())
-        if pd.notna(row.get("Period")) and str(row["Period"]).strip():
-            parts.append(str(row["Period"]).strip())
-        if pd.notna(row.get("Department")) and str(row["Department"]).strip():
-            parts.append(str(row["Department"]).strip())
-        return " | ".join(parts) if parts else str(row["Title"]).strip()
-
-    df["meta_view"] = df.apply(build_meta, axis=1)
-    print(f"유효 오브젝트: {len(df):,}개")
-    return df
+    def __getitem__(self, index: int):
+        row = self.frame.iloc[index]
+        with Image.open(row["image_path"]) as image:
+            image_tensor = self.preprocess(image.convert("RGB"))
+        return image_tensor, self.tokens[index]
 
 
-# ── Dataset ───────────────────────────────────────────────────────────────────
-class MetPairDataset(Dataset):
-    """
-    Self-supervised: (Title) ↔ (Medium + Artist + Culture + Period + Department)
-    같은 작품의 두 텍스트 뷰를 positive pair로 학습
-    """
-    def __init__(self, df: pd.DataFrame, max_pairs: int = 100_000):
-        pairs = [
-            (str(row["Title"]).strip(), str(row["meta_view"]).strip())
-            for _, row in df.iterrows()
-            if len(str(row["Title"]).strip()) > 3
-            and len(str(row["meta_view"]).strip()) > 3
-        ]
-        self.pairs = pairs[:max_pairs]
-        print(f"학습 쌍: {len(self.pairs):,}개")
-
-    def __len__(self):
-        return len(self.pairs)
-
-    def __getitem__(self, idx):
-        return self.pairs[idx]
-
-
-# ── Loss ──────────────────────────────────────────────────────────────────────
-def contrastive_loss(q: torch.Tensor, p: torch.Tensor, temperature: float = 0.07):
-    """대칭 InfoNCE (CLIP 방식)"""
-    q = F.normalize(q.float(), dim=-1)
-    p = F.normalize(p.float(), dim=-1)
-    logits = (q @ p.T) / temperature
-    labels = torch.arange(len(q), device=q.device)
+def clip_loss(image_features, text_features, logit_scale):
+    image_features = F.normalize(image_features, dim=-1)
+    text_features = F.normalize(text_features, dim=-1)
+    logits = logit_scale.exp() * image_features @ text_features.T
+    labels = torch.arange(len(logits), device=logits.device)
     return (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)) / 2
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def train():
-    if not os.path.exists(CSV_PATH):
-        print(f"{CSV_PATH} 없음 → 먼저 python download_data.py 실행")
-        return
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device}")
 
-    df = load_met_data()
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Met 공개 도메인 이미지로 CLIP 미세조정")
+    parser.add_argument("--dataset", type=Path, default=ARTIFACT_DIR / "dataset.csv")
+    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--lr", type=float, default=1e-5)
+    args = parser.parse_args()
 
-    # 모델 로드 + LoRA (MLP 레이어 타겟 — attention은 weight 직접 추출로 LoRA 우회됨)
-    base_model, _ = clip.load("ViT-B/32", device=device)
-    config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        target_modules=["c_fc", "c_proj"],
-        lora_dropout=0.1,
+    set_seed(SEED)
+    device = get_device()
+    model, preprocess, tokenizer = load_clip(device, trained=False)
+    params = trainable_text_parameters(model)
+    frame = pd.read_csv(args.dataset)
+    train_frame = frame[frame["split"] == "train"]
+    valid_frame = frame[frame["split"] == "valid"]
+    pin_memory = device.type == "cuda"
+    loader_args = dict(
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+        pin_memory=pin_memory,
+        persistent_workers=args.workers > 0,
     )
-    model = get_peft_model(base_model, config)
-    model.print_trainable_parameters()
-
-    # CPU/GPU 환경에 맞게 자동 조정
-    if device == "cuda":
-        max_pairs, batch_size, num_epochs = 100_000, 64, 5
-    else:
-        # CPU: 10,000쌍 × 3에폭 ≈ 20~30분
-        max_pairs, batch_size, num_epochs = 10_000, 32, 3
-        print("CPU 감지 → 경량 설정 적용 (10,000쌍 / batch 32 / 3 에폭, 약 20~30분)")
-
-    dataset = MetPairDataset(df, max_pairs=max_pairs)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
-
-    lora_params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = AdamW(lora_params, lr=2e-4, weight_decay=0.01)
-    scheduler = CosineAnnealingLR(optimizer, T_max=len(loader) * num_epochs)
-
+    train_loader = DataLoader(
+        MetImageTextDataset(train_frame, preprocess, tokenizer),
+        shuffle=True,
+        drop_last=True,
+        **loader_args,
+    )
+    valid_loader = DataLoader(
+        MetImageTextDataset(valid_frame, preprocess, tokenizer),
+        shuffle=False,
+        **loader_args,
+    )
+    optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=0.01)
+    scaler = GradScaler("cuda", enabled=pin_memory)
     best_loss = float("inf")
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-    for epoch in range(num_epochs):
+    for epoch in range(args.epochs):
         model.train()
-        total_loss = 0.0
-        t0 = time.time()
+        model.visual.eval()
+        started = time.perf_counter()
+        total = 0.0
+        for images, tokens in train_loader:
+            images = images.to(device, non_blocking=True)
+            tokens = tokens.to(device, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
+            with autocast(device.type, enabled=pin_memory):
+                with torch.no_grad():
+                    image_features = model.encode_image(images)
+                text_features = model.encode_text(tokens)
+                loss = clip_loss(image_features, text_features, model.logit_scale)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            total += loss.item()
 
-        for i, (titles, metas) in enumerate(loader):
-            q_tok = clip.tokenize(list(titles), truncate=True).to(device)
-            p_tok = clip.tokenize(list(metas), truncate=True).to(device)
+        model.eval()
+        valid_total = 0.0
+        with torch.inference_mode():
+            for images, tokens in valid_loader:
+                images = images.to(device, non_blocking=True)
+                tokens = tokens.to(device, non_blocking=True)
+                with autocast(device.type, enabled=pin_memory):
+                    valid_total += clip_loss(
+                        model.encode_image(images),
+                        model.encode_text(tokens),
+                        model.logit_scale,
+                    ).item()
+        train_loss = total / max(len(train_loader), 1)
+        valid_loss = valid_total / max(len(valid_loader), 1)
+        print(
+            f"epoch={epoch + 1} train={train_loss:.4f} valid={valid_loss:.4f} "
+            f"seconds={time.perf_counter() - started:.1f}"
+        )
+        if valid_loss < best_loss:
+            best_loss = valid_loss
+            trainable_names = {
+                name for name, parameter in model.named_parameters() if parameter.requires_grad
+            }
+            compact_state = {
+                name: tensor.cpu()
+                for name, tensor in model.state_dict().items()
+                if name in trainable_names
+            }
+            torch.save(
+                {"model": compact_state, "valid_loss": best_loss},
+                MODEL_DIR / "best.pt",
+            )
 
-            q_emb = model.model.encode_text(q_tok)
-            p_emb = model.model.encode_text(p_tok)
-
-            loss = contrastive_loss(q_emb, p_emb)
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(lora_params, 1.0)
-            optimizer.step()
-            scheduler.step()
-
-            total_loss += loss.item()
-
-            if i % 30 == 0:
-                elapsed = time.time() - t0
-                print(f"Epoch {epoch+1}/5 | Batch {i}/{len(loader)} | Loss {loss.item():.4f} | {elapsed:.0f}s")
-
-        avg = total_loss / len(loader)
-        print(f"[Epoch {epoch+1}] Avg Loss: {avg:.4f}")
-
-        if avg < best_loss:
-            best_loss = avg
-            torch.save(model.state_dict(), WEIGHTS_PATH)
-            print(f"  Best model saved → {WEIGHTS_PATH}")
-
-    print(f"학습 완료! Best Loss: {best_loss:.4f}")
+    (MODEL_DIR / "train_summary.json").write_text(
+        json.dumps({"best_valid_loss": best_loss, "device": str(device)}, indent=2),
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":
-    train()
+    main()

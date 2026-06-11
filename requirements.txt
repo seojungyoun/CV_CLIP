@@ -1,0 +1,10 @@
+faiss-cpu==1.11.0
+numpy==2.2.6
+open-clip-torch==2.32.0
+pandas==2.2.3
+Pillow==11.2.1
+requests==2.32.4
+streamlit==1.45.1
+torch==2.7.1
+torchvision==0.22.1
+tqdm==4.67.1
