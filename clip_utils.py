@@ -1,34 +1,25 @@
-from pathlib import Path
-
-import open_clip
+# clip_utils.py
 import torch
+import open_clip
+import config
 
-from config import MODEL_DIR, MODEL_NAME, PRETRAINED
-
-
-def get_device() -> torch.device:
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def load_clip(device: torch.device, trained: bool = True):
+def load_clip_model(device: torch.device, trained: bool = True):
+    """안정적인 OpenCLIP 원본 모델 구조화 및 부분 가중치(LoRA) 가중치 복원 모듈"""
     model, _, preprocess = open_clip.create_model_and_transforms(
-        MODEL_NAME, pretrained=PRETRAINED
+        config.MODEL_NAME, pretrained=config.PRETRAINED
     )
-    tokenizer = open_clip.get_tokenizer(MODEL_NAME)
-    checkpoint = MODEL_DIR / "best.pt"
+    tokenizer = open_clip.get_tokenizer(config.MODEL_NAME)
+    
+    checkpoint = config.LORA_WEIGHTS_PATH
     if trained and checkpoint.exists():
+        print(f"🔄 파인튜닝된 도메인 특화 LoRA 가중치 주입 중: {checkpoint}")
         state = torch.load(checkpoint, map_location="cpu", weights_only=True)
-        model.load_state_dict(state["model"], strict=False)
+        if "model" in state:
+            model.load_state_dict(state["model"], strict=False)
+        else:
+            model.load_state_dict(state, strict=False)
+    else:
+        print("💡 사전 학습된 원본 Base CLIP 모델을 로드합니다.")
+            
     model = model.to(device).eval()
     return model, preprocess, tokenizer
-
-
-def trainable_text_parameters(model) -> list[torch.nn.Parameter]:
-    for parameter in model.parameters():
-        parameter.requires_grad = False
-    # A small trainable surface is much faster and less prone to overfitting.
-    for parameter in model.transformer.resblocks[-1].parameters():
-        parameter.requires_grad = True
-    model.text_projection.requires_grad = True
-    model.logit_scale.requires_grad = True
-    return [parameter for parameter in model.parameters() if parameter.requires_grad]
