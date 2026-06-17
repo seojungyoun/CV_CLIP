@@ -164,7 +164,6 @@ MuseAI
 ├── generate_captions.py
 ├── build_index.py
 ├── evaluate.py
-├── train.py
 ├── requirements.txt
 │
 ├── data
@@ -323,18 +322,6 @@ artifacts/metrics.json
 * 의미 기반 검색
 * 성능 지표 표시
 * Met Museum 링크 제공
-
----
-
-## train.py
-
-CLIP Fine-Tuning 실험 코드
-
-기능
-
-* Contrastive Learning
-* 이미지-텍스트 쌍 학습
-* 모델 성능 향상 실험
 
 ---
 
