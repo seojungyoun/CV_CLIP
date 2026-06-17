@@ -20,8 +20,8 @@ METADATA_PATH = DATA_DIR / "metadata.csv"
 
 INDEX_PATH = ARTIFACT_DIR / "met.index"
 
-MODEL_NAME = "ViT-B-32"
-PRETRAINED = "laion2b_s34b_b79k"
+MODEL_NAME = "ViT-L-14"
+PRETRAINED = "laion2b_s32b_b82k"
 
 NUM_OBJECTS = 3000
 

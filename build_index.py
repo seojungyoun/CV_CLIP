@@ -3,14 +3,24 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from PIL import Image
-from tqdm import tqdm
 import open_clip
+
+from tqdm import tqdm
 
 import config
 
 
 def main():
+
+    print("Loading metadata...")
+
+    df = pd.read_csv(
+        "data/valid_metadata_blip.csv"
+    )
+
+    print(
+        f"Rows: {len(df)}"
+    )
 
     device = torch.device(
         "cuda"
@@ -18,16 +28,15 @@ def main():
         else "cpu"
     )
 
-    meta = pd.read_csv(
-        config.DATA_DIR /
-        "valid_metadata.csv"
+    print(
+        f"Device: {device}"
     )
 
     print(
-        f"Indexing {len(meta)} images..."
+        "Loading OpenCLIP..."
     )
 
-    model, _, preprocess = (
+    model, _, _ = (
         open_clip.create_model_and_transforms(
             config.MODEL_NAME,
             pretrained=config.PRETRAINED,
@@ -35,72 +44,99 @@ def main():
         )
     )
 
+    tokenizer = (
+        open_clip.get_tokenizer(
+            config.MODEL_NAME
+        )
+    )
+
     model.eval()
 
     vectors = []
 
+    print(
+        "Building embeddings..."
+    )
+
     with torch.no_grad():
 
         for _, row in tqdm(
-            meta.iterrows(),
-            total=len(meta)
+            df.iterrows(),
+            total=len(df)
         ):
 
-            try:
-
-                img = Image.open(
-                    row["image_path"]
-                ).convert("RGB")
-
-                img_tensor = (
-                    preprocess(img)
-                    .unsqueeze(0)
-                    .to(device)
+            blip_caption = str(
+                row.get(
+                    "blip_caption",
+                    ""
                 )
+            )
 
-                feat = (
-                    model.encode_image(
-                        img_tensor
-                    )
+            title = str(
+                row.get(
+                    "title",
+                    ""
                 )
+            )
 
-                feat = F.normalize(
-                    feat.float(),
-                    dim=-1
+            text = (
+                blip_caption
+                + ". "
+                + title
+            )
+
+            tokens = tokenizer(
+                [text]
+            ).to(device)
+
+            feat = (
+                model.encode_text(
+                    tokens
                 )
+            )
 
-                vectors.append(
-                    feat.cpu().numpy()[0]
-                )
+            feat = F.normalize(
+                feat.float(),
+                dim=-1
+            )
 
-            except Exception:
-                continue
+            vectors.append(
+                feat.cpu().numpy()
+            )
 
-    matrix = np.array(
+    vectors = np.concatenate(
         vectors,
-        dtype="float32"
+        axis=0
+    ).astype(
+        "float32"
+    )
+
+    dim = vectors.shape[1]
+
+    print(
+        f"Embedding dim: {dim}"
     )
 
     index = faiss.IndexFlatIP(
-        matrix.shape[1]
+        dim
     )
 
-    index.add(matrix)
+    index.add(
+        vectors
+    )
 
     faiss.write_index(
         index,
         str(config.INDEX_PATH)
     )
 
-    np.save(
-        config.ARTIFACT_DIR /
-        "embeddings.npy",
-        matrix
+    print()
+    print(
+        f"Saved index: {config.INDEX_PATH}"
     )
 
     print(
-        f"FAISS index saved "
-        f"({len(matrix)} vectors)"
+        f"Vectors: {index.ntotal}"
     )
 
 
