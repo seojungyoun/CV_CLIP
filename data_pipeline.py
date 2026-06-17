@@ -1,76 +1,388 @@
-# data_pipeline.py
 import hashlib
 from pathlib import Path
+
 import pandas as pd
+import requests
+from tqdm import tqdm
+
 import config
+import requests
+import time
+
 
 def _split_for_id(object_id: str, seed: int = config.SEED) -> str:
-    val = int(hashlib.sha1(f"{seed}:{object_id}".encode("utf-8")).hexdigest()[:8], 16) % 100
-    if val < 80: return "train"
-    if val < 90: return "valid"
+    val = int(
+        hashlib.sha1(
+            f"{seed}:{object_id}".encode("utf-8")
+        ).hexdigest()[:8],
+        16
+    ) % 100
+
+    if val < 80:
+        return "train"
+    if val < 90:
+        return "valid"
     return "test"
 
-def load_public_domain_rows(csv_path: Path, limit: int | None = None) -> pd.DataFrame:
-    print("🔍 [저작권 무결성 검증] 메트로폴리탄 오픈 데이터 텍스트 스크리닝 가동...")
-    chunks = []
+
+session = requests.Session()
+
+session.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/137.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Referer": "https://www.metmuseum.org/"
+})
+
+
+def get_image_url(object_id):
+
+    try:
+
+        url = (
+            "https://collectionapi.metmuseum.org/"
+            f"public/collection/v1/objects/{object_id}"
+        )
+
+        r = session.get(
+            url,
+            timeout=20
+        )
+
+        if r.status_code == 403:
+            time.sleep(1)
+
+            r = session.get(
+                url,
+                timeout=20
+            )
+
+        if not r.ok:
+            print(
+                f"FAIL: {object_id} {r.status_code}"
+            )
+            return ""
+
+        data = r.json()
+
+        return (
+            data.get("primaryImageSmall")
+            or data.get("primaryImage")
+            or ""
+        )
+
+    except Exception as e:
+
+        print(
+            f"ERROR: {object_id} {e}"
+        )
+
+        return ""
+
+def generate_visual_caption(row):
+
+    title = str(row.get("Title", "")).strip()
+    title_lower = title.lower()
+
+    medium = str(
+        row.get("Medium", "")
+    ).strip().lower()
+
+    culture = str(
+        row.get("Culture", "")
+    ).strip()
+
+    department = str(
+        row.get("Department", "")
+    ).strip()
+
+    classification = str(
+        row.get("Classification", "")
+    ).strip().lower()
+
+    date = str(
+        row.get("Object Date", "")
+    ).strip()
+
+    adjectives = []
+
+    # 재질 기반
+    if any(x in medium for x in ["gold", "silver", "gilded"]):
+        adjectives += [
+            "luxurious",
+            "ornate",
+            "royal",
+            "valuable"
+        ]
+
+    if any(x in medium for x in ["glass", "crystal"]):
+        adjectives += [
+            "elegant",
+            "decorative",
+            "delicate"
+        ]
+
+    if any(x in medium for x in ["porcelain", "ceramic"]):
+        adjectives += [
+            "colorful",
+            "decorative",
+            "artistic"
+        ]
+
+    if any(x in medium for x in ["wood"]):
+        adjectives += [
+            "traditional",
+            "crafted",
+            "historical"
+        ]
+
+    if any(x in medium for x in ["marble", "stone"]):
+        adjectives += [
+            "classical",
+            "monumental",
+            "historical"
+        ]
+
+        # 재질 기반 확장
+
+        if "brass" in medium:
+            adjectives += [
+                "ornate",
+                "decorative",
+                "metalwork"
+            ]
+
+        if "iron" in medium:
+            adjectives += [
+                "historical",
+                "crafted",
+                "industrial"
+            ]
+
+        if "mahogany" in medium:
+            adjectives += [
+                "luxurious",
+                "elegant",
+                "crafted"
+            ]
+
+        if "paper" in medium:
+            adjectives += [
+                "printed",
+                "historical"
+            ]
+
+        if "earthenware" in medium:
+            adjectives += [
+                "decorative",
+                "ceramic",
+                "crafted"
+            ]
+
+        # 제목 기반 확장
+
+        if "clock" in title_lower:
+            adjectives += [
+                "decorative",
+                "historical",
+                "crafted"
+            ]
+
+        if "advertisement" in title_lower:
+            adjectives += [
+                "printed",
+                "graphic",
+                "historical"
+            ]
+
+        if "andiron" in title_lower:
+            adjectives += [
+                "ornate",
+                "decorative",
+                "metalwork"
+            ]
+
+        if "glass" in title_lower:
+            adjectives += [
+                "elegant",
+                "decorative"
+            ]
+
+    # 분류 기반
+    if "painting" in classification:
+        adjectives += [
+            "fine art",
+            "painted"
+        ]
+
+    if "sculpture" in classification:
+        adjectives += [
+            "three-dimensional",
+            "classical"
+        ]
+
+    if "furniture" in classification:
+        adjectives += [
+            "decorative",
+            "crafted"
+        ]
+
+    if "textile" in classification:
+        adjectives += [
+            "ornamental",
+            "patterned"
+        ]
+
+    # 제목 기반
+    title_lower = title.lower()
+
+    if any(x in title_lower for x in [
+        "portrait",
+        "woman",
+        "man",
+        "figure",
+        "lady",
+        "gentleman"
+    ]):
+        adjectives += [
+            "portrait",
+            "person",
+            "human"
+        ]
+
+    if any(x in title_lower for x in [
+        "vase",
+        "bottle",
+        "jar"
+    ]):
+        adjectives += [
+            "decorative",
+            "crafted"
+        ]
+
+    if any(x in title_lower for x in [
+        "chair",
+        "table",
+        "cabinet"
+    ]):
+        adjectives += [
+            "furniture",
+            "historical"
+        ]
+
     
-    for chunk in pd.read_csv(
-        csv_path, usecols=lambda c: c in config.CSV_COLUMNS, chunksize=50000, low_memory=False, dtype=str
-    ):
-        # [💡 KeyError 완벽 차단 패치] 
-        # 원본 CSV에 지정한 컬럼명이 일부 누락되어 있더라도, 에러를 내지 않고 빈 칸으로 선제 생성합니다.
-        for col in config.CSV_COLUMNS:
-            if col not in chunk.columns:
-                chunk[col] = ""
-            else:
-                chunk[col] = chunk[col].fillna("").astype(str).str.strip()
-                
-        # 안전하게 정제된 컬럼에서 이미지 URL 추출
-        chunk["image_url"] = chunk.get("Primary Image Small", "")
-        mask_empty = chunk["image_url"] == ""
-        if "Primary Image" in chunk.columns:
-            chunk.loc[mask_empty, "image_url"] = chunk["Primary Image"]
-        
-        # 기본 이미지 백업 가드 주입
-        chunk.loc[chunk["image_url"] == "", "image_url"] = "https://images.metmuseum.org/CRDImages/eg/web-large/DP118749.jpg"
-        
-        # 저작권이 오픈되어 있고 제목이 존재하는 유효 명세만 스크리닝
-        is_public = chunk["Is Public Domain"].str.lower().isin({"true", "1", "yes", "true.0"})
-        has_title = chunk["Title"].ne("")
-        
-        filtered = chunk.loc[is_public & has_title].copy()
-        if not filtered.empty:
-            chunks.append(filtered)
-            
-        if limit and sum(len(c) for c in chunks) >= limit:
-            break
 
-    if not chunks:
-        print("⚠️ [안내] 조건에 맞는 데이터 분할이 부족하여 기본 더미 세트를 빌드합니다.")
-        return pd.DataFrame(columns=config.CSV_COLUMNS + ["image_url", "caption", "split"])
+    adjectives = list(dict.fromkeys(adjectives))
 
-    frame = pd.concat(chunks, ignore_index=True)
+    adjective_text = ", ".join(adjectives)
+
+    return (
+        f"A museum artwork. "
+        f"Visual style: {adjective_text}. "
+        f"Title: {title}. "
+        f"Culture: {culture}. "
+        f"Department: {department}. "
+        f"Material: {medium}. "
+        f"Date: {date}."
+    )
+
+def load_public_domain_rows(
+    csv_path: Path,
+    limit: int | None = None
+) -> pd.DataFrame:
+
+    print("🔍 Loading Met Open Access dataset...")
+
+    frame = pd.read_csv(
+        csv_path,
+        low_memory=False,
+        dtype=str
+    )
+
+    frame = frame.fillna("")
+
+    frame = frame[
+        frame["Is Public Domain"]
+        .astype(str)
+        .str.lower()
+        .isin(["true", "1", "yes"])
+    ].copy()
+
+    frame = frame[
+        frame["Title"].astype(str).str.strip() != ""
+    ].copy()
+
     if limit:
-        frame = frame.head(limit).copy()
-        
-    for col in config.TEXT_COLUMNS:
-        if col in frame.columns:
-            frame[col] = frame[col].fillna("").astype(str).str.strip()
+        frame = frame.sample(
+            n=min(limit, len(frame)),
+            random_state=config.SEED
+        )
 
-    # CLIP 텍스트 인코더용 시맨틱 문맥 캡션 생성
-    captions = []
-    for _, row in frame.iterrows():
-        parts = [row[col] for col in config.TEXT_COLUMNS if col in frame.columns and row[col] not in {"", "Unknown"}]
-        captions.append(" | ".join(parts) if parts else "Met Museum Artwork Object")
-        
-    frame["caption"] = captions
-    frame["Object ID"] = frame["Object ID"].astype(str).str.strip() if "Object ID" in frame.columns else frame.index.astype(str)
-    frame["split"] = [_split_for_id(uid) for uid in frame["Object ID"]]
+    print(f"📦 Public domain objects: {len(frame):,}")
+
+    image_urls = []
+
+    object_ids = (
+        frame["Object ID"]
+        .astype(str)
+        .tolist()
+    )
+
+    for object_id in tqdm(
+        object_ids,
+        desc="Fetching image URLs"
+    ):
+        image_urls.append(
+            get_image_url(object_id)
+        )
+
+    frame["image_url"] = image_urls
+
+    before = len(frame)
+
+    frame = frame[
+        frame["image_url"].astype(str) != ""
+    ].copy()
+
+    print(
+        f"🖼️ Valid images: "
+        f"{len(frame):,} / {before:,}"
+    )
+
+    frame["caption"] = frame.apply(
+        generate_visual_caption,
+        axis=1
+    )
+
+    frame["Object ID"] = (
+        frame["Object ID"]
+        .astype(str)
+        .str.strip()
+    )
+
+    frame["split"] = [
+        _split_for_id(obj_id)
+        for obj_id in frame["Object ID"]
+    ]
+
     return frame.reset_index(drop=True)
 
-def download_images(frame: pd.DataFrame, image_dir: Path = config.IMAGE_DIR, workers: int = 16, timeout: int = 15) -> pd.DataFrame:
-    # 물리적 다운로드 과정을 완벽하게 생략하고 다이렉트 주소만 바인딩
-    print("⚡ [텍스트 인프라] 이미지 하드 다운로드를 완전히 우회하여 실시간 클라우드 링크 주소를 매핑했습니다.")
+
+def download_images(
+    frame: pd.DataFrame,
+    image_dir: Path = config.IMAGE_DIR,
+    workers: int = 16,
+    timeout: int = 15
+) -> pd.DataFrame:
+
     result = frame.copy()
-    result["image_path"] = result["image_url"]
+
+    result["image_path"] = (
+        result["image_url"]
+        .astype(str)
+    )
+
     return result.reset_index(drop=True)

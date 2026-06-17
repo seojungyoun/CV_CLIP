@@ -1,138 +1,432 @@
-# Met Museum CLIP Semantic Search
+# 🏛 MuseAI: CLIP 기반 의미 중심 미술품 검색 시스템
 
-Metropolitan Museum of Art Open Access 이미지와 메타데이터를 사용해 CLIP을 미세조정하고, 자연어로 작품을 검색하는 Streamlit 프로젝트입니다. CSV에서 `Is Public Domain == True`이며 이미지 URL이 존재하는 작품만 데이터셋에 포함합니다.
+## 1. 프로젝트 소개
 
-> 실행 화면 캡처는 최종 배포 후 `docs/images/app.png`에 추가하세요. 측정하지 않은 성능 수치는 README나 보고서에 임의로 기입하지 않습니다.
+MuseAI는 OpenCLIP과 FAISS를 활용하여 사용자가 입력한 자연어의 의미를 기반으로 Met Museum 작품을 검색하는 웹 서비스입니다.
 
-## 주요 기능
+기존의 키워드 기반 검색과 달리 "화려한", "우아한", "고풍스러운", "왕실풍", "초상화"와 같은 추상적이고 형용사적인 표현을 이해하여 관련 미술품을 검색할 수 있습니다.
 
-- 공개 도메인 이미지 자동 필터링 및 병렬 다운로드
-- 실제 이미지-텍스트 쌍을 이용한 CLIP contrastive fine-tuning
-- Object ID 해시 기반 Train/Valid/Test 고정 분할
-- Baseline 대비 Zero-shot Accuracy, Image Retrieval R@1/R@5, Latency 평가
-- FAISS 인덱스 사전 생성으로 웹 앱 시작 시간 단축
-- Streamlit 모델 및 인덱스 싱글톤 캐시
-- 로컬 절대 경로 없는 설정 구조
+본 프로젝트는 Met Museum Open Access Dataset을 활용하였으며, OpenCLIP 임베딩과 벡터 검색 기술을 결합하여 의미 기반(Semantic Search) 검색 시스템을 구현하였습니다.
 
-## 프로젝트 구조
+---
+
+## 2. 주요 기능
+
+### Semantic Artwork Search
+
+* 자연어 기반 의미 검색
+* 한국어 검색 지원
+* OpenCLIP Text Encoder 활용
+* FAISS 기반 고속 벡터 검색
+
+### Performance Dashboard
+
+* Zero-shot Accuracy
+* Image Retrieval R@1
+* Image Retrieval R@5
+* Inference Latency
+
+### Museum Navigation
+
+* Met Museum 원본 작품 페이지 연결
+* 작품 메타데이터 제공
+* 실시간 검색 시간 측정
+
+---
+
+## 3. 시스템 아키텍처
+
+### 데이터 구축
+
+Met Museum Open Access Dataset
+
+↓
+
+Public Domain 작품 필터링
+
+↓
+
+이미지 다운로드
+
+↓
+
+OpenCLIP Image Encoder
+
+↓
+
+512차원 임베딩 생성
+
+↓
+
+FAISS Index 저장
+
+---
+
+### 검색 과정
+
+사용자 검색어 입력
+
+↓
+
+OpenCLIP Text Encoder
+
+↓
+
+텍스트 임베딩 생성
+
+↓
+
+FAISS Similarity Search
+
+↓
+
+Top-K 작품 반환
+
+↓
+
+Streamlit UI 출력
+
+---
+
+## 4. 개발 환경
+
+### Language
+
+* Python 3.10+
+
+### Framework
+
+* Streamlit
+
+### Deep Learning
+
+* PyTorch
+* OpenCLIP
+
+### Vector Search
+
+* FAISS
+
+### Data Processing
+
+* Pandas
+* Pillow
+
+---
+
+## 5. 설치 방법
+
+### 1. Repository Clone
+
+```bash
+git clone https://github.com/your-repository/MuseAI.git
+
+cd MuseAI
+```
+
+### 2. 가상환경 생성
+
+```bash
+conda create -n museai python=3.10
+
+conda activate museai
+```
+
+또는
+
+```bash
+python -m venv venv
+
+venv\Scripts\activate
+```
+
+### 3. 의존성 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## 6. 데이터 파이프라인
+
+### Step 1. 메타데이터 수집
+
+```bash
+python prepare_data.py --limit 3000
+```
+
+결과:
 
 ```text
-CV_CLIP/
-├── app.py                         # Streamlit UI
-├── build_index.py                 # 이미지 임베딩 및 FAISS 인덱스 생성
-├── clip_utils.py                  # CLIP 로드 및 학습 범위 설정
-├── config.py                      # 경로와 모델 설정
-├── data_pipeline.py               # 저작권 필터, 분할, 이미지 다운로드
-├── download_data.py               # MetObjects.csv 자동 다운로드
-├── evaluate.py                    # Baseline/Fine-tuned 정량 평가
-├── prepare_data.py                # 학습 데이터 준비 CLI
-├── train.py                       # CLIP 미세조정
-├── requirements.txt
-└── docs/FINAL_REPORT_CHECKLIST.md
+data/metadata.csv
 ```
 
-## 개발 환경
+생성
 
-- Python 3.10 또는 3.11 권장
-- CUDA GPU 권장, CPU 실행 가능
-- PyTorch, OpenCLIP, FAISS, Streamlit, pandas
+---
 
-## 설치 및 실행
+### Step 2. 이미지 다운로드
 
 ```bash
-git clone <REPOSITORY_URL>
-cd CV_CLIP
-python -m venv .venv
+python download_images.py
 ```
 
-Windows:
+결과:
 
-```powershell
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+```text
+data/images/
+data/valid_metadata.csv
 ```
 
-macOS/Linux:
+생성
+
+---
+
+### Step 3. 벡터 인덱스 생성
 
 ```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-데이터 준비부터 앱 실행까지:
-
-```bash
-python download_data.py
-python prepare_data.py --limit 20000 --workers 16
-python train.py --epochs 3 --batch-size 64
-python evaluate.py
 python build_index.py
+```
+
+결과:
+
+```text
+artifacts/met.index
+```
+
+생성
+
+---
+
+### Step 4. 성능 평가
+
+```bash
+python evaluate.py
+```
+
+결과:
+
+```text
+artifacts/metrics.json
+```
+
+생성
+
+---
+
+### Step 5. 웹 서비스 실행
+
+```bash
 streamlit run app.py
 ```
 
-GPU 메모리가 부족하면 `--batch-size 16` 또는 `32`를 사용하세요. 빠른 기능 확인은 `prepare_data.py --limit 1000`으로 가능합니다.
+---
 
-학습 산출물이 없어도 `streamlit run app.py`는 중단되지 않고 필요한 준비 명령을 화면에 안내합니다.
+## 7. 프로젝트 구조
 
-## 데이터 파이프라인
-
-1. Met Open Access의 `MetObjects.csv`를 `data/`에 다운로드합니다.
-2. `Is Public Domain` 값이 참인 행만 남깁니다.
-3. `Primary Image` 또는 `Primary Image Small` URL이 있는 행만 남깁니다.
-4. 병렬 다운로드 후 손상되거나 이미지가 아닌 응답을 제외합니다.
-5. `Object ID`의 SHA-1 해시로 Train 80%, Valid 10%, Test 10%를 고정 분할합니다.
-6. 제목, 작가, 연도, 재질, 문화권, 부서, 분류, 태그를 캡션으로 구성합니다.
-
-동일한 `Object ID`는 항상 한 split에만 배정되므로 실행 순서가 바뀌어도 데이터 누수가 발생하지 않습니다.
-
-## 속도 최적화
-
-- 47만 행 전체가 아니라 저작권 및 이미지 조건을 먼저 적용합니다.
-- 이미지 다운로드에 `ThreadPoolExecutor`를 사용합니다.
-- CLIP 전체가 아닌 마지막 text transformer block과 projection만 학습합니다.
-- CUDA AMP, pinned memory, non-blocking transfer, persistent DataLoader worker를 사용합니다.
-- 앱 시작 시 임베딩을 다시 계산하지 않고 저장된 FAISS 인덱스를 읽습니다.
-- Streamlit `@st.cache_resource`와 `@st.cache_data`로 모델, 인덱스, 메타데이터를 재사용합니다.
-
-## 평가
-
-```bash
-python evaluate.py
+```text
+MuseAI
+│
+├── app.py
+├── config.py
+├── prepare_data.py
+├── download_images.py
+├── build_index.py
+├── evaluate.py
+├── requirements.txt
+│
+├── data
+│   ├── metadata.csv
+│   ├── valid_metadata.csv
+│   └── images
+│
+├── artifacts
+│   ├── met.index
+│   └── metrics.json
+│
+└── README.md
 ```
 
-결과는 `artifacts/metrics.json`에 저장됩니다.
+---
 
-| 구분 | 필수 지표 |
-|---|---|
-| Zero-shot | Department prompt classification accuracy |
-| Retrieval | Image Retrieval R@1, R@5 |
-| Runtime | 이미지 1개당 추론 latency(ms) |
+## 8. 데이터셋
 
-`baseline`은 사전학습 CLIP, `fine_tuned`는 프로젝트 학습 가중치를 사용합니다. 보고서에는 실제 실행 결과와 함께 데이터 수, GPU/CPU, batch size를 기록하세요.
+### Source
 
-## 대용량 파일
+Met Museum Open Access Collection
 
-`data/`, `artifacts/`, `.pt`, `.onnx`, `.npy`, `.index`는 Git에서 제외됩니다. 최종 가중치와 인덱스는 Google Drive 같은 외부 저장소에 업로드하고 아래 링크를 실제 주소로 교체하세요.
+https://github.com/metmuseum/openaccess
 
-- Fine-tuned weights: `<WEIGHTS_DOWNLOAD_URL>`
-- FAISS index and metadata: `<INDEX_DOWNLOAD_URL>`
+### Original Dataset
 
-또는 이 README의 명령으로 새 PC에서 직접 재생성할 수 있습니다.
+* 약 480,000개 작품
 
-## 팀원 역할
+### Experiment Dataset
 
-제출 전에 실제 역할로 수정하세요.
+* Public Domain 작품 필터링
+* 이미지 다운로드 성공 작품만 사용
 
-| 팀원 | 역할 |
-|---|---|
-| 팀원 1 | 데이터 필터링, 학습 파이프라인, 정량 평가 |
-| 팀원 2 | FAISS 검색, Streamlit UI, 배포 및 문서화 |
+최종 데이터셋:
 
-## 보고서 작성
+* 656 작품
 
-데이터 분포, 샘플과 라벨 상태, Baseline 비교표, Failure Case, 서비스 구현 내용은 [`docs/FINAL_REPORT_CHECKLIST.md`](docs/FINAL_REPORT_CHECKLIST.md)를 기준으로 작성합니다.
+---
 
-## 데이터 및 라이선스
+## 9. 성능 평가
 
-- Metadata: [The Met Open Access](https://github.com/metmuseum/openaccess)
-- 본 프로젝트는 CSV에서 공개 도메인으로 표시된 이미지에 한해 학습 및 화면 표시를 수행합니다.
+### Evaluation Metrics
+
+CLIP 기반 Retrieval Task
+
+| Metric              | Score    |
+| ------------------- | -------- |
+| Zero-shot Accuracy  | 36.59%   |
+| Image Retrieval R@1 | 16.62%   |
+| Image Retrieval R@5 | 30.64%   |
+| Inference Latency   | 16.82 ms |
+
+---
+
+## 10. Failure Case 분석
+
+### Case 1
+
+검색어:
+
+```text
+초상화
+```
+
+결과:
+
+```text
+갑옷
+장식품
+조각상
+```
+
+일부 반환
+
+### 원인
+
+OpenCLIP은 대규모 이미지-텍스트 데이터로 사전학습되었으며, 박물관 작품에 특화된 모델이 아니다.
+
+Met Museum 데이터셋에는 유사한 시각적 특징을 갖는 작품이 다수 존재하여 의미적으로 관련성이 높은 작품이 함께 검색되는 현상이 발생하였다.
+
+---
+
+### Case 2
+
+검색어:
+
+```text
+화려한
+```
+
+결과:
+
+금속 공예품, 갑옷, 장식품 등이 혼합되어 검색
+
+### 원인
+
+"화려한"이라는 추상적 표현은 다양한 시각적 특징으로 해석될 수 있으며, CLIP 임베딩 공간에서 여러 장식성 높은 작품이 유사하게 배치되기 때문이다.
+
+---
+
+## 11. 구현 과정에서 적용한 기술적 개선
+
+### Query Expansion
+
+예시
+
+```text
+화려한
+```
+
+↓
+
+```text
+ornate luxurious decorative artwork
+```
+
+확장
+
+---
+
+### FAISS Index 활용
+
+* 실시간 벡터 검색
+* 검색 속도 개선
+
+---
+
+### Streamlit Cache
+
+```python
+@st.cache_resource
+@st.cache_data
+```
+
+사용
+
+효과
+
+* 모델 중복 로딩 방지
+* 인덱스 재생성 방지
+* 응답 속도 개선
+
+---
+
+### 코드 모듈화
+
+* config.py
+* prepare_data.py
+* download_images.py
+* build_index.py
+* evaluate.py
+* app.py
+
+분리
+
+하드코딩 제거 및 유지보수성 향상
+
+---
+
+## 12. 팀원 역할 분담
+
+### 서정윤
+
+* 프로젝트 기획
+* 데이터 파이프라인 구축
+* OpenCLIP 기반 검색 모델 구현
+* FAISS 벡터 검색 구현
+* Streamlit UI 개발
+* 성능 평가 및 분석
+* 최종 보고서 작성
+
+---
+
+## 13. 실행 화면
+
+프로젝트 실행 화면 캡처 이미지를 아래에 첨부한다.
+
+* 검색 메인 화면
+* 성능 평가 화면
+* 검색 결과 화면
+
+---
+
+## 14. 참고 문헌
+
+OpenCLIP
+
+https://github.com/mlfoundations/open_clip
+
+FAISS
+
+https://github.com/facebookresearch/faiss
+
+Met Museum Open Access
+
+https://github.com/metmuseum/openaccess
