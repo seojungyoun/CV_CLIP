@@ -1,19 +1,68 @@
+import os
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import json
 import time
 
+import open_clip
 import pandas as pd
 import torch
 import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
-import open_clip
 
 import config
 
 
+def clean_text(value):
+
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+
+    if not text or text.lower() == "nan":
+        return ""
+
+    return text
+
+
+def build_caption(row):
+
+    fields = [
+        "title",
+        "blip_caption",
+        "classification",
+        "medium",
+        "department",
+    ]
+
+    return ". ".join(
+        value
+        for value in (
+            clean_text(row.get(field))
+            for field in fields
+        )
+        if value
+    )
+
+
+def load_metadata():
+
+    blip_path = config.DATA_DIR / "valid_metadata_blip.csv"
+
+    if blip_path.exists():
+        return blip_path, pd.read_csv(blip_path)
+
+    fallback_path = config.DATA_DIR / "valid_metadata.csv"
+
+    return fallback_path, pd.read_csv(fallback_path)
+
+
 def main():
 
-    print("📊 Evaluation Start")
+    print("Evaluation Start")
 
     device = torch.device(
         "cuda"
@@ -21,17 +70,15 @@ def main():
         else "cpu"
     )
 
-    meta = pd.read_csv(
-        config.DATA_DIR /
-        "valid_metadata.csv"
-    )
+    metadata_path, meta = load_metadata()
 
-    model, _, preprocess = (
-        open_clip.create_model_and_transforms(
-            config.MODEL_NAME,
-            pretrained=config.PRETRAINED,
-            device=device
-        )
+    print(f"Metadata: {metadata_path}")
+    print(f"Rows: {len(meta)}")
+
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        config.MODEL_NAME,
+        pretrained=config.PRETRAINED,
+        device=device
     )
 
     tokenizer = open_clip.get_tokenizer(
@@ -42,14 +89,11 @@ def main():
 
     image_vectors = []
     text_vectors = []
-
+    valid_departments = []
     latencies = []
-
     prompts = []
 
-    print(
-        "🏃 Running evaluation..."
-    )
+    print("Running evaluation...")
 
     with torch.no_grad():
 
@@ -60,15 +104,14 @@ def main():
 
             try:
 
+                caption = build_caption(row)
+
+                if not caption:
+                    continue
+
                 img = Image.open(
                     row["image_path"]
                 ).convert("RGB")
-
-                caption = (
-                    f"{row['title']} "
-                    f"{row['classification']} "
-                    f"{row['medium']}"
-                )
 
                 img_tensor = (
                     preprocess(img)
@@ -80,20 +123,14 @@ def main():
                     [caption]
                 ).to(device)
 
-                start = (
-                    time.perf_counter()
+                start = time.perf_counter()
+
+                img_feat = model.encode_image(
+                    img_tensor
                 )
 
-                img_feat = (
-                    model.encode_image(
-                        img_tensor
-                    )
-                )
-
-                txt_feat = (
-                    model.encode_text(
-                        tokens
-                    )
+                txt_feat = model.encode_text(
+                    tokens
                 )
 
                 if device.type == "cuda":
@@ -104,9 +141,7 @@ def main():
                     - start
                 ) * 1000
 
-                latencies.append(
-                    elapsed
-                )
+                latencies.append(elapsed)
 
                 img_feat = F.normalize(
                     img_feat.float(),
@@ -126,21 +161,17 @@ def main():
                     txt_feat.cpu()
                 )
 
-                prompts.append(
-                    caption
+                valid_departments.append(
+                    row["department"]
                 )
 
-            except Exception:
+                prompts.append(caption)
 
-                continue
+            except Exception as exc:
+                print("Skip:", row.get("image_path", ""), exc)
 
-    img_mat = torch.cat(
-        image_vectors
-    )
-
-    txt_mat = torch.cat(
-        text_vectors
-    )
+    img_mat = torch.cat(image_vectors)
+    txt_mat = torch.cat(text_vectors)
 
     sim = txt_mat @ img_mat.T
 
@@ -170,14 +201,15 @@ def main():
     )
 
     departments = sorted(
-        meta["department"]
+        pd.Series(valid_departments)
+        .dropna()
         .unique()
         .tolist()
     )
 
     dept_prompts = [
-        f"a museum artwork from {d}"
-        for d in departments
+        f"a museum artwork from {department}"
+        for department in departments
     ]
 
     dept_tokens = tokenizer(
@@ -186,10 +218,8 @@ def main():
 
     with torch.no_grad():
 
-        dept_feats = (
-            model.encode_text(
-                dept_tokens
-            )
+        dept_feats = model.encode_text(
+            dept_tokens
         )
 
         dept_feats = F.normalize(
@@ -202,8 +232,8 @@ def main():
     ).argmax(dim=1)
 
     gt = torch.tensor([
-        departments.index(d)
-        for d in meta["department"]
+        departments.index(department)
+        for department in valid_departments
     ])
 
     accuracy = (
@@ -214,6 +244,15 @@ def main():
     )
 
     metrics = {
+        "Evaluation Metadata":
+            metadata_path.name,
+
+        "Text Features":
+            "title + blip_caption + classification + medium + department",
+
+        "Evaluated Samples":
+            len(valid_departments),
+
         "Zero-shot Accuracy":
             f"{accuracy * 100:.2f}%",
 
@@ -255,9 +294,7 @@ def main():
     )
 
     print()
-    print(
-        f"Saved: {metrics_path}"
-    )
+    print(f"Saved: {metrics_path}")
 
 
 if __name__ == "__main__":

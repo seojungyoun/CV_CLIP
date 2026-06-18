@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import faiss
 import numpy as np
 import pandas as pd
@@ -5,17 +9,58 @@ import torch
 import torch.nn.functional as F
 import open_clip
 
+from PIL import Image
 from tqdm import tqdm
 
 import config
+
+
+def clean_text(value):
+
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+
+    if not text or text.lower() == "nan":
+        return ""
+
+    return text
+
+
+def metadata_text(row):
+
+    fields = [
+        "title",
+        "blip_caption",
+        "classification",
+        "medium",
+        "object_date",
+        "department",
+    ]
+
+    return ". ".join(
+        value
+        for value in (
+            clean_text(row.get(field))
+            for field in fields
+        )
+        if value
+    )
 
 
 def main():
 
     print("Loading metadata...")
 
+    metadata_path = (
+        config.DATA_DIR / "valid_metadata_blip.csv"
+        if (config.DATA_DIR / "valid_metadata_blip.csv").exists()
+        else config.DATA_DIR / "valid_metadata.csv"
+    )
+
     df = pd.read_csv(
-        "data/valid_metadata_blip.csv"
+        metadata_path
     )
 
     print(
@@ -36,7 +81,7 @@ def main():
         "Loading OpenCLIP..."
     )
 
-    model, _, _ = (
+    model, _, preprocess = (
         open_clip.create_model_and_transforms(
             config.MODEL_NAME,
             pretrained=config.PRETRAINED,
@@ -44,18 +89,17 @@ def main():
         )
     )
 
-    tokenizer = (
-        open_clip.get_tokenizer(
-            config.MODEL_NAME
-        )
+    tokenizer = open_clip.get_tokenizer(
+        config.MODEL_NAME
     )
 
     model.eval()
 
     vectors = []
+    indexed_rows = []
 
     print(
-        "Building embeddings..."
+        "Building image embeddings..."
     )
 
     with torch.no_grad():
@@ -65,44 +109,84 @@ def main():
             total=len(df)
         ):
 
-            blip_caption = str(
-                row.get(
-                    "blip_caption",
-                    ""
+            try:
+
+                image = (
+                    Image.open(row["image_path"])
+                    .convert("RGB")
                 )
-            )
 
-            title = str(
-                row.get(
-                    "title",
-                    ""
+                image_tensor = (
+                    preprocess(image)
+                    .unsqueeze(0)
+                    .to(device)
                 )
-            )
 
-            text = (
-                blip_caption
-                + ". "
-                + title
-            )
-
-            tokens = tokenizer(
-                [text]
-            ).to(device)
-
-            feat = (
-                model.encode_text(
-                    tokens
+                image_feat = model.encode_image(
+                    image_tensor
                 )
-            )
 
-            feat = F.normalize(
-                feat.float(),
-                dim=-1
-            )
+                image_feat = F.normalize(
+                    image_feat.float(),
+                    dim=-1
+                )
 
-            vectors.append(
-                feat.cpu().numpy()
-            )
+                text = metadata_text(row)
+
+                if text:
+
+                    tokens = tokenizer(
+                        [text]
+                    ).to(device)
+
+                    text_feat = model.encode_text(
+                        tokens
+                    )
+
+                    text_feat = F.normalize(
+                        text_feat.float(),
+                        dim=-1
+                    )
+
+                    feat = (
+                        config.IMAGE_EMBED_WEIGHT
+                        * image_feat
+                        + (1 - config.IMAGE_EMBED_WEIGHT)
+                        * text_feat
+                    )
+
+                    feat = F.normalize(
+                        feat.float(),
+                        dim=-1
+                    )
+
+                else:
+
+                    feat = image_feat
+
+                vectors.append(
+                    feat.cpu().numpy()
+                )
+
+                indexed_rows.append(
+                    {
+                        **row.to_dict(),
+                        "search_text": text,
+                    }
+                )
+
+            except Exception as exc:
+
+                print(
+                    "Skip:",
+                    row.get("image_path", ""),
+                    exc
+                )
+
+    if not vectors:
+        raise RuntimeError(
+            "No image embeddings were created."
+        )
 
     vectors = np.concatenate(
         vectors,
@@ -130,9 +214,28 @@ def main():
         str(config.INDEX_PATH)
     )
 
+    indexed_df = pd.DataFrame(
+        indexed_rows
+    )
+
+    indexed_df.to_csv(
+        config.INDEXED_METADATA_PATH,
+        index=False
+    )
+
     print()
     print(
         f"Saved index: {config.INDEX_PATH}"
+    )
+
+    print(
+        f"Saved indexed metadata: {config.INDEXED_METADATA_PATH}"
+    )
+
+    print(
+        "Index mode: hybrid "
+        f"image={config.IMAGE_EMBED_WEIGHT:.2f} "
+        f"metadata={1 - config.IMAGE_EMBED_WEIGHT:.2f}"
     )
 
     print(

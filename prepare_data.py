@@ -26,8 +26,15 @@ def main():
 
     print("Total rows:", len(df))
 
+    public_domain = (
+        df["Is Public Domain"]
+        .astype(str)
+        .str.upper()
+        .isin(["TRUE", "1", "YES"])
+    )
+
     df = df[
-        df["Is Public Domain"] == True
+        public_domain
     ].copy()
 
     df = df[
@@ -48,7 +55,7 @@ def main():
     ):
 
         n = min(
-            300,
+            config.SAMPLE_PER_DEPARTMENT,
             len(group)
         )
 
