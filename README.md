@@ -430,16 +430,10 @@ artifacts/metrics.json
 
 # 9. 웹 서비스 실행
 
-Python 3.13 기준
+가상환경을 활성화한 뒤 아래 명령어로 실행한다.
 
 ```bash
 python -m streamlit run app.py
-```
-
-또는
-
-```bash
-C:\Users\belli\AppData\Local\Programs\Python\Python313\python.exe -m streamlit run app.py
 ```
 
 실행 후
@@ -452,6 +446,18 @@ http://localhost:8501
 
 ---
 
+# 9-1. 실행 화면
+
+웹 앱 상단에는 현재 검색 방식과 평가 지표가 표시된다.
+
+* 검색 방식: OpenCLIP 이미지/캡션/메타데이터 하이브리드 임베딩 + FAISS 후보 검색 + Re-ranking
+* 성능 지표: Zero-shot Accuracy, Image Retrieval R@1, Image Retrieval R@5, Inference Latency
+* 검색 결과: 작품 이미지, 제목, 부서, 분류, 매체, BLIP 캡션, 최종 점수 출력
+
+실제 실행 화면은 `python -m streamlit run app.py` 실행 후 `http://localhost:8501`에서 확인할 수 있다.
+
+---
+
 # 10. 성능 결과
 
 ## Baseline
@@ -460,40 +466,84 @@ OpenCLIP + FAISS
 
 | Metric             | Score  |
 | ------------------ | ------ |
-| Zero-shot Accuracy | 36.59% |
-| R@1                | 16.62% |
-| R@5                | 30.64% |
+| Zero-shot Accuracy | 18.52% |
+| R@1                | 62.96% |
+| R@5                | 97.53% |
+| Latency            | 1020.50 ms |
 
 ---
 
 ## Improved
 
-BLIP + OpenCLIP + FAISS
+BLIP Caption + OpenCLIP Hybrid Embedding + FAISS + Re-ranking
 
 | Metric             | Score  |
 | ------------------ | ------ |
-| Zero-shot Accuracy | 40.09% |
-| R@1                | 20.43% |
-| R@5                | 34.15% |
+| Zero-shot Accuracy | 18.52% |
+| R@1                | 72.84% |
+| R@5                | 100.00% |
+| Latency            | 593.01 ms |
 
 성능 향상
 
-* Accuracy +3.50%p
-* R@1 +3.81%p
-* R@5 +3.51%p
+* R@1 +9.88%p
+* R@5 +2.47%p
+* Latency 약 41.9% 감소
+* Zero-shot Accuracy는 동일하게 측정되었으며, 클래스 라벨 자체를 맞히는 성능보다 이미지 검색 상위 노출 품질이 개선되었다.
 
 ---
 
-# 11. 한계점
+# 11. 대용량 파일 및 재현 가능성
+
+## 대용량 파일 처리
+
+GitHub는 100MB를 초과하는 파일 업로드를 제한하므로, 모델 가중치와 생성 산출물은 레포지토리에 포함하지 않는다.
+
+`.gitignore`에서 다음 항목을 제외한다.
+
+```text
+data/
+artifacts/
+*.pt
+*.onnx
+*.npy
+*.index
+```
+
+OpenCLIP과 BLIP 가중치는 실행 시 `open-clip-torch`, `transformers` 라이브러리를 통해 자동으로 다운로드된다. 따라서 새 PC에서는 `requirements.txt` 설치 후 파이프라인을 다시 실행하면 동일한 구조의 산출물을 생성할 수 있다.
+
+## 재현 절차
+
+```bash
+git clone https://github.com/seojungyoun/CV_CLIP.git
+cd CV_CLIP
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python prepare_data.py
+python download_images.py
+python generate_captions.py
+python build_index.py
+python evaluate.py
+python -m streamlit run app.py
+```
+
+코드에는 개인 PC 절대 경로를 사용하지 않고, `config.py`의 프로젝트 기준 상대 경로를 사용한다.
+
+---
+
+# 12. 한계점
 
 * 박물관 특화 데이터셋 부족
 * BLIP가 일부 작품을 부정확하게 설명
 * Fine-tuning 데이터 수 부족
 * 복잡한 예술적 개념 이해 한계
+* 전체 MetObjects.csv에는 작품이 많지만, 공개 도메인 여부, 이미지 URL 존재 여부, 실제 이미지 다운로드 성공 여부를 통과한 작품만 검색 인덱스에 포함되므로 평가 샘플 수가 제한됨
+* 저작권 또는 이미지 미제공 작품을 제외하면 특정 부서와 클래스에 데이터가 치우칠 수 있어 Zero-shot Accuracy가 낮게 측정될 수 있음
 
 ---
 
-# 12. 향후 개선 방향
+# 13. 향후 개선 방향
 
 * CLIP Fine-Tuning 적용
 * BLIP Large 모델 적용
@@ -503,7 +553,16 @@ BLIP + OpenCLIP + FAISS
 
 ---
 
-# 13. 개발자
+# 14. 팀원별 역할 분담
+
+| 이름 | 역할 |
+| --- | --- |
+| 서정윤 | 데이터 수집 및 전처리, Met Museum 데이터셋 필터링, 결과 분석 |
+| 김연우 | CLIP/BLIP 기반 검색 파이프라인 구현, Streamlit UI, 평가 및 문서화 |
+
+---
+
+# 15. 개발자
 
 서정윤, 김연우
 
