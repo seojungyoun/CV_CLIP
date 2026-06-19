@@ -13,7 +13,7 @@ import config
 
 def main():
 
-    print("📊 Evaluation Start")
+    print("Evaluation Start")
 
     device = torch.device(
         "cuda"
@@ -48,7 +48,7 @@ def main():
     prompts = []
 
     print(
-        "🏃 Running evaluation..."
+        "Running evaluation..."
     )
 
     with torch.no_grad():

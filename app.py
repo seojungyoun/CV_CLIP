@@ -97,21 +97,6 @@ def load_metadata():
     )
 
 
-@st.cache_data
-def load_metrics():
-
-    if not config.METRICS_PATH.exists():
-        return None
-
-    with open(
-        config.METRICS_PATH,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
-        return json.load(f)
-
-
 def expand_query(query):
 
     expanded = query
@@ -166,87 +151,21 @@ def search(query, top_k=12):
     )
 
 
+# 메타데이터 로드
 meta = load_metadata()
-metrics = load_metrics()
 
+# 타이틀 및 설명 영역
 st.title(
-    "🏛 MuseAI Semantic Artwork Search"
+    "MuseAI Semantic Artwork Search"
 )
 
 st.caption(
     "OpenCLIP + FAISS 기반 의미 중심 미술품 검색 시스템"
 )
 
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.metric(
-        "작품 수",
-        len(meta)
-    )
-
-with col2:
-    st.metric(
-        "CLIP 모델",
-        config.MODEL_NAME
-    )
-
-with col3:
-    st.metric(
-        "FAISS 벡터",
-        len(meta)
-    )
-
-with col4:
-    st.metric(
-        "검색 결과",
-        "Top-K"
-    )
-
-if metrics:
-
-    st.markdown("---")
-
-    m1, m2, m3, m4 = st.columns(4)
-
-    with m1:
-        st.metric(
-            "Zero-shot Accuracy",
-            metrics.get(
-                "Zero-shot Accuracy",
-                "-"
-            )
-        )
-
-    with m2:
-        st.metric(
-            "R@1",
-            metrics.get(
-                "Image Retrieval R@1",
-                "-"
-            )
-        )
-
-    with m3:
-        st.metric(
-            "R@5",
-            metrics.get(
-                "Image Retrieval R@5",
-                "-"
-            )
-        )
-
-    with m4:
-        st.metric(
-            "Latency",
-            metrics.get(
-                "Inference Latency",
-                "-"
-            )
-        )
-
 st.markdown("---")
 
+# 검색 설정 및 입력 영역
 top_k = st.slider(
     "표시할 작품 수",
     min_value=4,
@@ -264,6 +183,7 @@ st.caption(
     "예시 검색어: 화려한 | 우아한 | 초상화 | 왕실풍 | 고대 유물"
 )
 
+# 검색 실행 및 결과 출력
 if query:
 
     start = time.perf_counter()
@@ -337,7 +257,7 @@ if query:
                 )
 
                 st.caption(
-                    f"🏺 {row['classification']}"
+                    row['classification']
                 )
 
                 st.caption(
@@ -352,5 +272,5 @@ if query:
                 )
 
                 st.markdown(
-                    f"[🏛 작품 보기]({met_url})"
+                    f"[작품 보기]({met_url})"
                 )

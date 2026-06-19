@@ -13,7 +13,7 @@ import config
 
 def main():
 
-    print("📊 Evaluation Start")
+    print("BLIP Evaluation Start")
 
     device = torch.device(
         "cuda"
@@ -45,10 +45,8 @@ def main():
 
     latencies = []
 
-    prompts = []
-
     print(
-        "🏃 Running evaluation..."
+        "Running BLIP evaluation..."
     )
 
     with torch.no_grad():
@@ -64,10 +62,24 @@ def main():
                     row["image_path"]
                 ).convert("RGB")
 
-                caption = (
-                    f"{row['title']} "
-                    f"{row['classification']} "
-                    f"{row['medium']}"
+                blip_caption = str(
+                    row.get(
+                        "blip_caption",
+                        ""
+                    )
+                )
+
+                title = str(
+                    row.get(
+                        "title",
+                        ""
+                    )
+                )
+
+                text = (
+                    blip_caption
+                    + ". "
+                    + title
                 )
 
                 img_tensor = (
@@ -77,7 +89,7 @@ def main():
                 )
 
                 tokens = tokenizer(
-                    [caption]
+                    [text]
                 ).to(device)
 
                 start = (
@@ -126,11 +138,11 @@ def main():
                     txt_feat.cpu()
                 )
 
-                prompts.append(
-                    caption
-                )
+            except Exception as e:
 
-            except Exception:
+                print(
+                    f"SKIP: {e}"
+                )
 
                 continue
 
@@ -214,6 +226,7 @@ def main():
     )
 
     metrics = {
+
         "Zero-shot Accuracy":
             f"{accuracy * 100:.2f}%",
 
@@ -229,7 +242,7 @@ def main():
 
     metrics_path = (
         config.ARTIFACT_DIR /
-        "metrics.json"
+        "metrics_blip.json"
     )
 
     with open(
