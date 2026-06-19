@@ -232,18 +232,18 @@ Streamlit 기반 검색 서비스.
 
 | Metric              |      Score |
 | ------------------- | ---------: |
-| Zero-shot Accuracy  |     16.62% |
-| Image Retrieval R@1 |     62.96% |
-| Image Retrieval R@5 |     97.53% |
+| Zero-shot Accuracy  |     43.10% |
+| Image Retrieval R@1 |     19.49% |
+| Image Retrieval R@5 |     35.41% |
 | Inference Latency   | 1020.50 ms |
 
 ### BLIP 적용
 
 | Metric              |     Score |
 | ------------------- | --------: |
-| Zero-shot Accuracy  |    18.52% |
-| Image Retrieval R@1 |    72.84% |
-| Image Retrieval R@5 |   100.00% |
+| Zero-shot Accuracy  |    43.10% |
+| Image Retrieval R@1 |    28.98% |
+| Image Retrieval R@5 |    47.42% |
 | Inference Latency   | 593.01 ms |
 
 ### 성능 비교
