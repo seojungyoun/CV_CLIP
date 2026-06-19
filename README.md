@@ -330,7 +330,7 @@ artifacts/metrics.json
 ## 저장소 복제
 
 ```bash
-git clone https://github.com/TEAM_REPOSITORY.git
+git clone https://github.com/seojungyoun/CV_CLIP.git
 
 cd MuseAI
 ```
@@ -447,6 +447,8 @@ http://localhost:8501
 ---
 
 # 9-1. 실행 화면
+
+![MuseAI Streamlit 실행 화면](docs/app_screenshot.png)
 
 웹 앱 상단에는 현재 검색 방식과 평가 지표가 표시된다.
 
