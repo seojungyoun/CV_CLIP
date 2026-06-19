@@ -341,8 +341,6 @@ streamlit run app.py
 * PyTorch
 * Transformers
 * Streamlit
-* Pandas
-* Pillow
 
 ---
 
