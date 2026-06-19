@@ -61,7 +61,6 @@ def main():
                 img = Image.open(
                     row["image_path"]
                 ).convert("RGB")
-
                 blip_caption = str(
                     row.get(
                         "blip_caption",
@@ -76,10 +75,25 @@ def main():
                     )
                 )
 
+                classification = str(
+                    row.get(
+                        "classification",
+                        ""
+                    )
+                )
+
+                department = str(
+                    row.get(
+                        "department",
+                        ""
+                    )
+                )
+
                 text = (
-                    blip_caption
-                    + ". "
-                    + title
+                    f"{blip_caption} "
+                    f"{classification} "
+                    f"{department} "
+                    f"{title}"
                 )
 
                 img_tensor = (

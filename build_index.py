@@ -64,7 +64,6 @@ def main():
             df.iterrows(),
             total=len(df)
         ):
-
             blip_caption = str(
                 row.get(
                     "blip_caption",
@@ -79,10 +78,25 @@ def main():
                 )
             )
 
+            classification = str(
+                row.get(
+                    "classification",
+                    ""
+                )
+            )
+
+            department = str(
+                row.get(
+                    "department",
+                    ""
+                )
+            )
+
             text = (
-                blip_caption
-                + ". "
-                + title
+                f"{blip_caption} "
+                f"{classification} "
+                f"{department} "
+                f"{title}"
             )
 
             tokens = tokenizer(
