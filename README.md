@@ -48,7 +48,7 @@ MuseAI는 Met Museum Open Access Dataset을 활용하여 자연어 기반 미술
 | 단계             |       개수 |
 | -------------- | -------: |
 | MetObjects 전체  |  484,956 |
-| Department 샘플링 | 최대 2,400 |
+| Department 샘플링 | 2,400 |
 | 이미지 다운로드 성공    |      656 |
 | 최종 사용 데이터      |      656 |
 
@@ -72,7 +72,7 @@ MetObjects.csv
         ↓
 Department 필터링
         ↓
-Department별 최대 300개 샘플링
+Department별 300개 샘플링
         ↓
 이미지 다운로드
         ↓
@@ -126,8 +126,7 @@ CV_CLIP
 │   ├── met.index
 │   ├── metadata.csv
 │   ├── metrics.json
-│   ├── metrics_blip.json
-│   └── train_history.json
+│   └── metrics_blip.json
 │
 ├── data
 │   ├── images/
@@ -160,7 +159,7 @@ CV_CLIP
 
 Met Museum Open Access Dataset을 불러온 후 Public Domain 작품만 선택한다.
 
-지정된 8개 Department를 필터링하고 Department별 최대 300개 작품을 샘플링하여 metadata.csv를 생성한다.
+지정된 8개 Department를 필터링하고 Department별 300개 작품을 샘플링하여 metadata.csv를 생성한다.
 
 ### download_images.py
 
@@ -186,11 +185,6 @@ Department.
 
 OpenCLIP Text Encoder를 이용하여 텍스트 임베딩을 생성한다.
 
-실제 입력 텍스트:
-
-```text
-BLIP Caption + Title
-```
 
 생성된 임베딩으로 FAISS IndexFlatIP 인덱스를 구축한다.
 
@@ -198,21 +192,9 @@ BLIP Caption + Title
 
 Baseline 성능 평가.
 
-입력 텍스트:
-
-```text
-Title + Classification + Medium
-```
-
 ### evaluate_blip.py
 
 BLIP 적용 성능 평가.
-
-입력 텍스트:
-
-```text
-BLIP Caption + Title
-```
 
 ### app.py
 
