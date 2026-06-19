@@ -26,14 +26,15 @@ def main():
 
     processor = (
         BlipProcessor.from_pretrained(
-            "Salesforce/blip-image-captioning-base"
-        )
+        "Salesforce/blip-image-captioning-base",
+        local_files_only=True
+    )
     )
 
     model = (
-        BlipForConditionalGeneration
-        .from_pretrained(
-            "Salesforce/blip-image-captioning-base"
+        BlipForConditionalGeneration.from_pretrained(
+            "Salesforce/blip-image-captioning-base",
+            local_files_only=True
         )
     )
 
