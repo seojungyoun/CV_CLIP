@@ -221,8 +221,7 @@ Streamlit 기반 검색 서비스.
 주요 기능:
 
 * 자연어 검색
-* Query Expansion
-* Top-K 조절
+* 출력 개수 조절
 * 작품 이미지 출력
 * Met Museum 원본 링크 제공
 
